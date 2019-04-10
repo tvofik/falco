@@ -1426,40 +1426,85 @@
        container.image.repository contains ose-docker-registry or
        container.image.repository contains image-inspector))
 
+# These images are allowed both to run with --privileged and to mount
+# sensitive paths from the host filesystem.
+#
+# NOTE: This list is only provided for backwards compatibility with
+# older local falco rules files that may have been appending to
+# trusted_images. To make customizations, it's better to add images to
+# either privileged_images or sensitive_mount_images.
 - list: trusted_images
-  items: [
-    sysdig/agent, sysdig/falco, sysdig/sysdig, gcr.io/google_containers/hyperkube,
-    quay.io/coreos/flannel, gcr.io/google_containers/kube-proxy, calico/node,
-    rook/toolbox, cloudnativelabs/kube-router, consul, mesosphere/mesos-slave,
-    datadog/docker-dd-agent, datadog/agent, docker/ucp-agent, gliderlabs/logspout
-    ]
-
-- macro: trusted_containers
-  condition: (openshift_image or
-              container.image.repository in (trusted_images) or
-              container.image.repository startswith istio/proxy_ or
-              container.image.repository startswith quay.io/sysdig)
-
-- list: rancher_images
-  items: [
-    rancher/network-manager, rancher/dns, rancher/agent, 
-    rancher/lb-service-haproxy, rancher/metadata, rancher/healthcheck
-  ]
+  items: []
 
 # Add conditions to this macro (probably in a separate file,
 # overwriting this macro) to specify additional containers that are
-# trusted and therefore allowed to run privileged.
+# trusted and therefore allowed to run privileged *and* with sensitive
+# mounts.
+#
+# Like trusted_images, this is deprecated in favor of
+# user_privileged_containers and user_sensitive_mount_containers and
+# is only provided for backwards compatibility.
 #
 # In this file, it just takes one of the images in trusted_containers
 # and repeats it.
 - macro: user_trusted_containers
   condition: (container.image.repository=sysdig/agent)
 
+# These container images are allowed to run with --privileged
+- list: privileged_images
+  items: [
+    sysdig/agent, sysdig/falco, sysdig/sysdig,
+    gcr.io/google_containers/kube-proxy, calico/node,
+    rook/toolbox, cloudnativelabs/kube-router, mesosphere/mesos-slave,
+    docker/ucp-agent
+    ]
+
+- macro: privileged_containers
+  condition: (openshift_image or
+              user_trusted_containers or
+              container.image.repository in (trusted_images) or
+              container.image.repository in (privileged_images) or
+              container.image.repository startswith istio/proxy_ or
+              container.image.repository startswith quay.io/sysdig)
+
+# Add conditions to this macro (probably in a separate file,
+# overwriting this macro) to specify additional containers that are
+# allowed to run privileged
+#
+# In this file, it just takes one of the images in privileged_images
+# and repeats it.
+- macro: user_privileged_containers
+  condition: (container.image.repository=sysdig/agent)
+
+
+- list: rancher_images
+  items: [
+    rancher/network-manager, rancher/dns, rancher/agent,
+    rancher/lb-service-haproxy, rancher/metadata, rancher/healthcheck
+  ]
+
+# These container images are allowed to mount sensitive paths from the
+# host filesystem.
+- list: sensitive_mount_images
+  items: [
+    sysdig/agent, sysdig/falco, sysdig/sysdig,
+    gcr.io/google_containers/hyperkube,
+    gcr.io/google_containers/kube-proxy, calico/node,
+    rook/toolbox, cloudnativelabs/kube-router, consul,
+    datadog/docker-dd-agent, datadog/agent, docker/ucp-agent, gliderlabs/logspout
+    ]
+
+- macro: sensitive_mount_containers
+  condition: (user_trusted_containers or
+              container.image.repository in (trusted_images) or
+              container.image.repository in (sensitive_mount_images) or
+              container.image.repository startswith quay.io/sysdig)
+
 # Add conditions to this macro (probably in a separate file,
 # overwriting this macro) to specify additional containers that are
 # allowed to perform sensitive mounts.
 #
-# In this file, it just takes one of the images in trusted_containers
+# In this file, it just takes one of the images in sensitive_mount_images
 # and repeats it.
 - macro: user_sensitive_mount_containers
   condition: (container.image.repository=sysdig/agent)
@@ -1469,8 +1514,8 @@
   condition: >
     container_started and container
     and container.privileged=true
-    and not trusted_containers
-    and not user_trusted_containers
+    and not privileged_containers
+    and not user_privileged_containers
   output: Privileged container started (user=%user.name command=%proc.cmdline %container.info image=%container.image.repository:%container.image.tag)
   priority: INFO
   tags: [container, cis]
@@ -1509,7 +1554,7 @@
   condition: >
     container_started and container
     and sensitive_mount
-    and not trusted_containers
+    and not sensitive_mount_containers
     and not user_sensitive_mount_containers
   output: Container with sensitive mount started (user=%user.name command=%proc.cmdline %container.info image=%container.image.repository:%container.image.tag mounts=%container.mounts)
   priority: INFO
